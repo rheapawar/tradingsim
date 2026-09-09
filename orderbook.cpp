@@ -90,41 +90,31 @@ class OrderBook{
             int index = pricetoIndex(order.price);
             if(order.side == Side::ask && bestBidIndex >= index){
                 while(order.quantity > 0 && bestBidIndex >= index){
-                    price_level* lvl = &bid_orders[bestBidIndex];
-                    if(lvl->orders.empty()){
-                        --bestBidIndex;
-                        continue;
-                    }
-                    while(!lvl->orders.empty() && lvl->orders.front().quantity <= order.quantity && order.quantity > 0){
-                        order.quantity -= lvl->orders.front().quantity;
-                        cancelOrder(lvl->orders.front());
-                    }
-                    if(!lvl->orders.empty() && order.quantity > 0){
-                        lvl->orders.front().quantity -= order.quantity;
-                        order.quantity = 0;
-                    }
+                    if(matchHelper(bid_orders[bestBidIndex], order)) --bestBidIndex;
                 }
                 return true;
             }
             if(order.side == Side::bid && bestAskIndex <= index){
                 while(order.quantity > 0 && bestBidIndex <= index){
-                    price_level* lvl = &ask_orders[bestAskIndex];
-                    if(lvl->orders.empty()){
-                        ++bestAskIndex;
-                        continue;
-                    }
-                    while(!lvl->orders.empty() && lvl->orders.front().quantity <= order.quantity && order.quantity > 0){
-                        order.quantity -= lvl->orders.front().quantity;
-                        cancelOrder(lvl->orders.front());
-                    }
-                    if(!lvl->orders.empty() && order.quantity > 0){
-                        lvl->orders.front().quantity -= order.quantity;
-                        order.quantity = 0;
-                    }
+                    if(matchHelper(ask_orders[bestAskIndex], order)) ++bestAskIndex;
+
                 }
                 return true;
             }
             return false;
         }
+
+        bool matchHelper(price_level &lvl, Order &order){
+            while(!lvl.orders.empty() && lvl.orders.front().quantity <= order.quantity && order.quantity > 0){
+                order.quantity -= lvl.orders.front().quantity;
+                cancelOrder(lvl.orders.front());
+            }
+            if(!lvl.orders.empty() && order.quantity > 0){
+                lvl.orders.front().quantity -= order.quantity;
+                order.quantity = 0;
+            }
+            return lvl.orders.empty();
+        }
+            
 };
 
