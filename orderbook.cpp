@@ -55,6 +55,7 @@ class OrderBook{
 
         int bestBidIndex =-1;
         int bestAskIndex = -1;
+        uint64_t nextOrderId = 1;
 
         unordered_map<uint64_t, list<Order>::iterator> orderLookup;
 
@@ -63,6 +64,13 @@ class OrderBook{
         }
 
     public:
+
+        enum class OrderResult{
+            Accepted,
+            OrderModified,
+            RejectedInvalidPrice
+        };
+
         OrderBook(){
             bid_orders.resize(NUM_TICKS);
             ask_orders.resize(NUM_TICKS);
@@ -114,6 +122,34 @@ class OrderBook{
                 order.quantity = 0;
             }
             return lvl.orders.empty();
+        }
+
+        OrderResult placeOrder(Order &order){
+            int index = pricetoIndex(order.price);
+            if(index < 0 || index >= NUM_TICKS) return OrderResult::RejectedInvalidPrice;
+
+            order.orderId = nextOrderId++;
+            order.timestamp = chrono::steady_clock::now();
+
+            matchOrder(order);
+            if(order.quantity > 0) addOrder(order);
+
+            return OrderResult::Accepted;
+        }
+
+
+        OrderResult modifyOrder(Order &order, double price, double quantity){
+            if(order.price != price){
+                int prev_index = pricetoIndex(order.price);
+                price_level &old_lvl = (order.side == Side::ask) ? ask_orders[prev_index] : bid_orders[prev_index];
+
+                auto it = orderLookup[order.orderId];
+                old_lvl.orders.erase(it);
+
+                order.price = price;
+            }
+            order.quantity = quantity;
+            return placeOrder(order);
         }
             
 };
