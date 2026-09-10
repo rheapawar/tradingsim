@@ -92,6 +92,7 @@ class OrderBook{
             
             auto it = lvl.orders.insert(lvl.orders.end(), order);
             orderLookup[order.orderId] = it;
+            (order.side == Side::ask) ? bestAskIndex = min(bestAskIndex, index) : bestBidIndex = min(bestBidIndex, index);
         }
 
         void cancelOrder(Order &order){
@@ -112,8 +113,8 @@ class OrderBook{
                 }
                 return true;
             }
-            if(order.side == Side::bid && bestAskIndex <= index){
-                while(order.quantity > 0 && bestBidIndex <= index){
+            if(order.side == Side::bid && bestAskIndex >= 0 && bestAskIndex <= index){
+                while(order.quantity > 0 && bestAskIndex <= index){
                     if(matchHelper(ask_orders[bestAskIndex], order)) ++bestAskIndex;
 
                 }
@@ -171,10 +172,39 @@ class OrderBook{
                 old_lvl.orders.erase(it);
 
                 order.price = price;
+                order.quantity = quantity;
             }
-            order.quantity = quantity;
-            return placeOrder(order);
+            else{
+                order.quantity = quantity;
+                return OrderResult::OrderModified;
+            }
+            return (placeOrder(order) == OrderResult::Accepted) ? OrderResult::OrderModified : OrderResult::RejectedInvalidPrice);
         }
-            
+
+        // --- read-only accessors added for testing; no effect on matching behavior ---
+
+        const vector<Trade>& getTrades() const{
+            return executedTrades;
+        }
+
+        bool hasRestingOrder(uint64_t orderId) const{
+            return orderLookup.count(orderId) > 0;
+        }
+
+        uint32_t restingQuantity(Order &search) const{
+            int index = pricetoIndex(search.price);
+            if(index < 0 || index >= NUM_TICKS) return 0;
+            const price_level &lvl = (search.side == Side::ask) ? ask_orders[index] : bid_orders[index];
+            uint32_t total = 0;
+            for(const auto &o : lvl.orders) total += o.quantity;
+            return total;
+        }
+
+        size_t restingCount(Order &search) const{
+            int index = pricetoIndex(search.price);
+            if(index < 0 || index >= NUM_TICKS) return 0;
+            const price_level &lvl = (search.side == Side::ask) ? ask_orders[index] : bid_orders[index];
+            return lvl.orders.size();
+        }
 };
 
