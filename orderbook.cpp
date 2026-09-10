@@ -35,6 +35,14 @@ struct Order{
     Timestamp timestamp;
 };
 
+struct Trade{
+    uint64_t buyOrderid;
+    uint64_t sellOrderid;
+    double price;
+    uint32_t quantity;
+    Timestamp timestamp;
+};
+
 
 
 class OrderBook{
@@ -58,6 +66,7 @@ class OrderBook{
         uint64_t nextOrderId = 1;
 
         unordered_map<uint64_t, list<Order>::iterator> orderLookup;
+        vector<Trade> executedTrades;
 
         int pricetoIndex(double price) const{
             return static_cast<int>(round((price - LOWER_BOUND)/TICK_SIZE));
@@ -109,16 +118,26 @@ class OrderBook{
                 }
                 return true;
             }
+            
             return false;
         }
 
         bool matchHelper(price_level &lvl, Order &order){
-            while(!lvl.orders.empty() && lvl.orders.front().quantity <= order.quantity && order.quantity > 0){
-                order.quantity -= lvl.orders.front().quantity;
+            while(!lvl.orders.empty() && order.quantity > 0){
+                Order &front = lvl.orders.front();
+                if(front.quantity > order.quantity) break;
+
+                order.quantity -= front.quantity;
+                (order.side == Side::ask) ? executedTrades.push_back(Trade{front.orderId, order.orderId, front.price, front.quantity, chrono::steady_clock::now()}) : 
+                                            executedTrades.push_back(Trade{order.orderId, front.orderId, front.price, front.quantity, chrono::steady_clock::now()});
                 cancelOrder(lvl.orders.front());
             }
             if(!lvl.orders.empty() && order.quantity > 0){
-                lvl.orders.front().quantity -= order.quantity;
+                Order &front = lvl.orders.front();
+                front.quantity -= order.quantity;
+                (order.side == Side::ask) ? executedTrades.push_back(Trade{front.orderId, order.orderId, front.price, order.quantity, chrono::steady_clock::now()}) : 
+                                            executedTrades.push_back(Trade{order.orderId, front.orderId, front.price, order.quantity, chrono::steady_clock::now()});
+               
                 order.quantity = 0;
             }
             return lvl.orders.empty();
