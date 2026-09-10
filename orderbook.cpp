@@ -1,6 +1,5 @@
 #include <string>
 #include <vector>
-#include <map>
 #include <unordered_map>
 #include <list>
 #include <string>
@@ -66,7 +65,9 @@ class OrderBook{
         uint64_t nextOrderId = 1;
 
         unordered_map<uint64_t, list<Order>::iterator> orderLookup;
+        
         vector<Trade> executedTrades;
+        unordered_map<uint64_t, vector<size_t>> tradesbyId;
 
         int pricetoIndex(double price) const{
             return static_cast<int>(round((price - LOWER_BOUND)/TICK_SIZE));
@@ -127,9 +128,13 @@ class OrderBook{
                 Order &front = lvl.orders.front();
                 if(front.quantity > order.quantity) break;
 
+                size_t index = executedTrades.size();
                 order.quantity -= front.quantity;
                 (order.side == Side::ask) ? executedTrades.push_back(Trade{front.orderId, order.orderId, front.price, front.quantity, chrono::steady_clock::now()}) : 
                                             executedTrades.push_back(Trade{order.orderId, front.orderId, front.price, front.quantity, chrono::steady_clock::now()});
+            
+                tradesbyId[order.orderId].push_back(index);
+                tradesbyId[front.orderId].push_back(index);
                 cancelOrder(lvl.orders.front());
             }
             if(!lvl.orders.empty() && order.quantity > 0){
