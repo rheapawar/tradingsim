@@ -92,17 +92,20 @@ class OrderBook{
             
             auto it = lvl.orders.insert(lvl.orders.end(), order);
             orderLookup[order.orderId] = it;
-            (order.side == Side::ask) ? bestAskIndex = min(bestAskIndex, index) : bestBidIndex = min(bestBidIndex, index);
+            if(order.side == Side::ask) bestAskIndex = (bestAskIndex != -1) ? min(bestAskIndex, index) : index;
+            else bestBidIndex = max(bestBidIndex, index);
         }
 
-        void cancelOrder(Order &order){
-            int index = pricetoIndex(order.price);
-            price_level &lvl = (order.side == Side::ask) ? ask_orders[index] : bid_orders[index];
+        void cancelOrder(uint64_t orderId){
+            auto found = orderLookup.find(orderId);
+            if(found == orderLookup.end()) return;
 
-            auto it = orderLookup[order.orderId];
+            auto it = found->second;
+            int index = pricetoIndex(it->price);
+            price_level &lvl = (it->side == Side::ask) ? ask_orders[index] : bid_orders[index];
+
             lvl.orders.erase(it);
-            auto it2 = orderLookup.find(order.orderId);
-            orderLookup.erase(it2);
+            orderLookup.erase(found);
         }
 
         bool matchOrder(Order &order){
@@ -136,7 +139,7 @@ class OrderBook{
             
                 tradesbyId[order.orderId].push_back(index);
                 tradesbyId[front.orderId].push_back(index);
-                cancelOrder(lvl.orders.front());
+                cancelOrder(lvl.orders.front().orderId);
             }
             if(!lvl.orders.empty() && order.quantity > 0){
                 Order &front = lvl.orders.front();
@@ -163,25 +166,30 @@ class OrderBook{
         }
 
 
-        OrderResult modifyOrder(Order &order, double price, double quantity){
-            if(order.price != price){
-                int prev_index = pricetoIndex(order.price);
-                price_level &old_lvl = (order.side == Side::ask) ? ask_orders[prev_index] : bid_orders[prev_index];
+        OrderResult modifyOrder(uint64_t orderId, double price, uint32_t quantity){
+            auto found = orderLookup.find(orderId);
+            if(found == orderLookup.end()) return OrderResult::RejectedInvalidPrice;
+            auto it = found->second;
 
-                auto it = orderLookup[order.orderId];
+            if(it->price != price || it->quantity < quantity){
+                int prev_index = pricetoIndex(it->price);
+                price_level &old_lvl = (it->side == Side::ask) ? ask_orders[prev_index] : bid_orders[prev_index];
+                Order changed = *it;
+
                 old_lvl.orders.erase(it);
+                orderLookup.erase(found);
 
-                order.price = price;
-                order.quantity = quantity;
+                changed.price = price;
+                changed.quantity = quantity;
+                return (placeOrder(changed) == OrderResult::Accepted) ? OrderResult::OrderModified : OrderResult::RejectedInvalidPrice;
             }
             else{
-                order.quantity = quantity;
+                it->quantity = quantity;
                 return OrderResult::OrderModified;
             }
-            return (placeOrder(order) == OrderResult::Accepted) ? OrderResult::OrderModified : OrderResult::RejectedInvalidPrice);
         }
 
-        // --- read-only accessors added for testing; no effect on matching behavior ---
+        //read-only getters added for testing with no effect on matching behavior
 
         const vector<Trade>& getTrades() const{
             return executedTrades;
