@@ -3,13 +3,14 @@
 // test (there are a couple of real ones below) doesn't take out the rest
 // of the suite.
 
-#include "../orderbook.cpp"
+#include "../orderbook.hpp"
 
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstring>
 #include <csignal>
+#include <cstdlib>
 #include <vector>
 #include <string>
 #include <functional>
@@ -18,7 +19,7 @@
     do { \
         if (!(cond)) { \
             fprintf(stderr, "  CHECK failed: %s (line %d)\n", #cond, __LINE__); \
-            _exit(1); \
+            exit(1); \
         } \
     } while (0)
 
@@ -36,26 +37,26 @@ static Order makeOrder(Side side, double price, uint32_t qty) {
 // price above the band is 115.00 (index math mirrored from orderbook.cpp) ----
 
 void test_reject_price_below_band() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 84.99, 10);
     CHECK(book.placeOrder(o) == OrderBook::OrderResult::RejectedInvalidPrice);
 }
 
 void test_reject_price_at_upper_bound() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::ask, 115.00, 10);
     CHECK(book.placeOrder(o) == OrderBook::OrderResult::RejectedInvalidPrice);
 }
 
 void test_accept_lower_boundary_price() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 85.00, 10);
     CHECK(book.placeOrder(o) == OrderBook::OrderResult::Accepted);
     CHECK(book.hasRestingOrder(o.orderId));
 }
 
 void test_accept_upper_boundary_price() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::ask, 114.99, 10);
     CHECK(book.placeOrder(o) == OrderBook::OrderResult::Accepted);
     CHECK(book.hasRestingOrder(o.orderId));
@@ -64,7 +65,7 @@ void test_accept_upper_boundary_price() {
 // ---- basic resting / zero-quantity ----
 
 void test_non_crossing_order_rests() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 99.00, 25);
     book.placeOrder(o);
     CHECK(book.hasRestingOrder(o.orderId));
@@ -73,7 +74,7 @@ void test_non_crossing_order_rests() {
 }
 
 void test_zero_quantity_order_does_not_rest_or_trade() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 99.00, 0);
     CHECK(book.placeOrder(o) == OrderBook::OrderResult::Accepted);
     CHECK(!book.hasRestingOrder(o.orderId));
@@ -84,11 +85,11 @@ void test_zero_quantity_order_does_not_rest_or_trade() {
 // ---- cancel ----
 
 void test_cancel_existing_order_removes_it() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::ask, 101.00, 15);
     book.placeOrder(o);
     CHECK(book.hasRestingOrder(o.orderId));
-    book.cancelOrder(o);
+    book.cancelOrder(o.orderId);
     CHECK(!book.hasRestingOrder(o.orderId));
     CHECK(book.restingQuantity(o) == 0);
 }
@@ -96,27 +97,27 @@ void test_cancel_existing_order_removes_it() {
 // Edge case requested: cancelling an id that was never placed. A robust
 // cancelOrder should reject/no-op this instead of touching the book.
 void test_cancel_unknown_order_id_is_a_safe_noop() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order bogus = makeOrder(Side::bid, 90.00, 5);
     bogus.orderId = 999999; // never placed on this book
-    book.cancelOrder(bogus);
+    book.cancelOrder(bogus.orderId);
     CHECK(!book.hasRestingOrder(999999));
 }
 
 // Edge case requested: cancelling the same order twice.
 void test_cancel_same_order_twice_is_safe() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 90.00, 5);
     book.placeOrder(o);
-    book.cancelOrder(o);
-    book.cancelOrder(o); // second cancel on an id already removed
+    book.cancelOrder(o.orderId);
+    book.cancelOrder(o.orderId); // second cancel on an id already removed
     CHECK(!book.hasRestingOrder(o.orderId));
 }
 
 // ---- matching ----
 
 void test_crossing_ask_matches_resting_bid() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order restingBid = makeOrder(Side::bid, 100.00, 10);
     book.placeOrder(restingBid);
 
@@ -129,7 +130,7 @@ void test_crossing_ask_matches_resting_bid() {
 }
 
 void test_crossing_bid_matches_resting_ask() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order restingAsk = makeOrder(Side::ask, 100.00, 10);
     book.placeOrder(restingAsk);
 
@@ -142,7 +143,7 @@ void test_crossing_bid_matches_resting_ask() {
 }
 
 void test_partial_fill_leaves_remainder_resting() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order restingBid = makeOrder(Side::bid, 100.00, 20);
     book.placeOrder(restingBid);
 
@@ -157,7 +158,7 @@ void test_partial_fill_leaves_remainder_resting() {
 }
 
 void test_exact_quantity_match_removes_both_orders() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order restingBid = makeOrder(Side::bid, 100.00, 10);
     book.placeOrder(restingBid);
 
@@ -173,7 +174,7 @@ void test_exact_quantity_match_removes_both_orders() {
 // Edge case requested: one order large enough to sweep through and clear
 // out several resting price levels entirely.
 void test_aggressive_order_clears_entire_book() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order bid1 = makeOrder(Side::bid, 100.00, 10);
     Order bid2 = makeOrder(Side::bid, 99.50, 10);
     Order bid3 = makeOrder(Side::bid, 99.00, 10);
@@ -197,7 +198,7 @@ void test_aggressive_order_clears_entire_book() {
 // Aggressive order bigger than the entire resting side: it should sweep
 // everything available and then rest with whatever quantity is left over.
 void test_aggressive_order_bigger_than_book_rests_remainder() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order bid1 = makeOrder(Side::bid, 100.00, 10);
     Order bid2 = makeOrder(Side::bid, 99.00, 10);
     book.placeOrder(bid1);
@@ -216,11 +217,11 @@ void test_aggressive_order_bigger_than_book_rests_remainder() {
 // ---- modify ----
 
 void test_modify_quantity_only_does_not_duplicate_order() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 95.00, 10);
     book.placeOrder(o);
 
-    book.modifyOrder(o, 95.00, 20);
+    book.modifyOrder(o.orderId, 95.00, 20);
 
     // Exactly one resting order worth 20 at this level, not the original
     // 10 plus a second new order for 20.
@@ -229,12 +230,12 @@ void test_modify_quantity_only_does_not_duplicate_order() {
 }
 
 void test_modify_price_moves_order_between_levels() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order o = makeOrder(Side::bid, 95.00, 10);
     book.placeOrder(o);
 
     Order oldLevelProbe = makeOrder(Side::bid, 95.00, 0);
-    book.modifyOrder(o, 96.00, 10);
+    book.modifyOrder(o.orderId, 96.00, 10);
 
     CHECK(book.restingQuantity(oldLevelProbe) == 0);
     Order newLevelProbe = makeOrder(Side::bid, 96.00, 0);
@@ -243,10 +244,10 @@ void test_modify_price_moves_order_between_levels() {
 
 // Edge case requested: modifying an id the book has never seen.
 void test_modify_unknown_order_id_is_rejected_or_noop() {
-    OrderBook book;
+    OrderBook book("TEST", 100.0);
     Order bogus = makeOrder(Side::bid, 90.00, 5);
     bogus.orderId = 999999; // never placed
-    book.modifyOrder(bogus, 91.00, 5);
+    book.modifyOrder(bogus.orderId, 91.00, 5);
     CHECK(!book.hasRestingOrder(999999));
 }
 
@@ -278,7 +279,7 @@ int main() {
         pid_t pid = fork();
         if (pid == 0) {
             t.second();
-            _exit(0);
+            exit(0); // exit(), not _exit(): must run atexit so LeakSanitizer's check fires
         }
         int status;
         waitpid(pid, &status, 0);
