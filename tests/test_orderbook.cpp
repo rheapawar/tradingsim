@@ -157,6 +157,19 @@ void test_partial_fill_leaves_remainder_resting() {
     CHECK(!book.hasRestingOrder(aggressiveAsk.orderId));
 }
 
+void test_partial_fill_is_tracked_for_both_orders() {
+    OrderBook book("TEST", 100.0);
+    Order restingBid = makeOrder(Side::bid, 100.00, 20);
+    book.placeOrder(restingBid);
+
+    Order aggressiveAsk = makeOrder(Side::ask, 100.00, 8);
+    book.placeOrder(aggressiveAsk);
+
+    CHECK(book.getTradesForOrder(restingBid.orderId).size() == 1);
+    CHECK(book.getTradesForOrder(aggressiveAsk.orderId).size() == 1);
+    CHECK(book.getTradesForOrder(restingBid.orderId)[0].quantity == 8);
+}
+
 void test_exact_quantity_match_removes_both_orders() {
     OrderBook book("TEST", 100.0);
     Order restingBid = makeOrder(Side::bid, 100.00, 10);
@@ -265,6 +278,7 @@ int main() {
         {"crossing_ask_matches_resting_bid", test_crossing_ask_matches_resting_bid},
         {"crossing_bid_matches_resting_ask", test_crossing_bid_matches_resting_ask},
         {"partial_fill_leaves_remainder_resting", test_partial_fill_leaves_remainder_resting},
+        {"partial_fill_is_tracked_for_both_orders", test_partial_fill_is_tracked_for_both_orders},
         {"exact_quantity_match_removes_both_orders", test_exact_quantity_match_removes_both_orders},
         {"aggressive_order_clears_entire_book", test_aggressive_order_clears_entire_book},
         {"aggressive_order_bigger_than_book_rests_remainder", test_aggressive_order_bigger_than_book_rests_remainder},

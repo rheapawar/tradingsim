@@ -66,6 +66,24 @@ class OrderBook{
 
         vector<price_level> bid_orders;
         vector<price_level> ask_orders;
+        // one bit per tick: is  price level non-empty
+        vector<uint64_t> bidBits;
+        vector<uint64_t> askBits;
+        static void setBit(vector<uint64_t>& b, int i){ b[i>>6] |= (1ULL<<(i&63)); }
+        static void clearBit(vector<uint64_t>& b, int i){ b[i>>6] &= ~(1ULL<<(i&63)); }
+        // highest set bit <= i, or -1
+        static int prevSet(const vector<uint64_t>& b, int i){
+            if(i < 0) return -1;
+            int w = i>>6; uint64_t m = b[w] & ((i&63)==63 ? ~0ULL : ((1ULL<<((i&63)+1))-1));
+            while(true){ if(m) return (w<<6) + 63 - __builtin_clzll(m); if(--w < 0) return -1; m = b[w]; }
+        }
+        // lowest set bit >= i, or -1
+        int nextSet(const vector<uint64_t>& b, int i) const{
+            if(i >= NUM_TICKS) return -1;
+            int w = i>>6; uint64_t m = b[w] & (~0ULL << (i&63));
+            int nw = (int)b.size();
+            while(true){ if(m) return (w<<6) + __builtin_ctzll(m); if(++w >= nw) return -1; m = b[w]; }
+        }
 
         int bestBidIndex =-1;
         int bestAskIndex = -1;
@@ -95,6 +113,8 @@ class OrderBook{
               NUM_TICKS(static_cast<int>((2 * referencePrice * BAND_PERCENT) / TICK_SIZE)){
             bid_orders.resize(NUM_TICKS);
             ask_orders.resize(NUM_TICKS);
+            bidBits.assign((NUM_TICKS+63)/64, 0);
+            askBits.assign((NUM_TICKS+63)/64, 0);
         }
 
         void addOrder(Order &order){
@@ -103,6 +123,7 @@ class OrderBook{
             
             auto it = lvl.orders.insert(lvl.orders.end(), order);
             orderLookup[order.orderId] = it;
+            setBit(order.side == Side::ask ? askBits : bidBits, index);
             if(order.side == Side::ask) bestAskIndex = (bestAskIndex != -1) ? min(bestAskIndex, index) : index;
             else bestBidIndex = max(bestBidIndex, index);
         }
@@ -115,22 +136,26 @@ class OrderBook{
             int index = pricetoIndex(it->price);
             price_level &lvl = (it->side == Side::ask) ? ask_orders[index] : bid_orders[index];
 
+            Side side = it->side;
             lvl.orders.erase(it);
             orderLookup.erase(found);
+            if(lvl.orders.empty()){
+                if(side == Side::ask){ clearBit(askBits, index); if(index == bestAskIndex) bestAskIndex = nextSet(askBits, index); }
+                else { clearBit(bidBits, index); if(index == bestBidIndex) bestBidIndex = prevSet(bidBits, index); }
+            }
         }
 
         bool matchOrder(Order &order){
             int index = pricetoIndex(order.price);
             if(order.side == Side::ask && bestBidIndex >= index){
                 while(order.quantity > 0 && bestBidIndex >= index){
-                    if(matchHelper(bid_orders[bestBidIndex], order)) --bestBidIndex;
+                    matchHelper(bid_orders[bestBidIndex], order);
                 }
                 return true;
             }
             if(order.side == Side::bid && bestAskIndex >= 0 && bestAskIndex <= index){
-                while(order.quantity > 0 && bestAskIndex <= index){
-                    if(matchHelper(ask_orders[bestAskIndex], order)) ++bestAskIndex;
-
+                while(order.quantity > 0 && bestAskIndex >= 0 && bestAskIndex <= index){
+                    matchHelper(ask_orders[bestAskIndex], order);
                 }
                 return true;
             }
@@ -154,10 +179,13 @@ class OrderBook{
             }
             if(!lvl.orders.empty() && order.quantity > 0){
                 Order &front = lvl.orders.front();
+                size_t index = executedTrades.size();
                 front.quantity -= order.quantity;
                 (order.side == Side::ask) ? executedTrades.push_back(Trade{front.orderId, order.orderId, front.price, order.quantity, chrono::steady_clock::now()}) : 
                                             executedTrades.push_back(Trade{order.orderId, front.orderId, front.price, order.quantity, chrono::steady_clock::now()});
-               
+
+                tradesbyId[order.orderId].push_back(index);
+                tradesbyId[front.orderId].push_back(index);
                 order.quantity = 0;
             }
             return lvl.orders.empty();
@@ -183,12 +211,9 @@ class OrderBook{
             auto it = found->second;
 
             if(it->price != price || it->quantity < quantity){
-                int prev_index = pricetoIndex(it->price);
-                price_level &old_lvl = (it->side == Side::ask) ? ask_orders[prev_index] : bid_orders[prev_index];
                 Order changed = *it;
-
-                old_lvl.orders.erase(it);
-                orderLookup.erase(found);
+                // go through cancelOrder so the bitmap and best index stay in sync
+                cancelOrder(orderId);
 
                 changed.price = price;
                 changed.quantity = quantity;
@@ -204,6 +229,14 @@ class OrderBook{
 
         const vector<Trade>& getTrades() const{
             return executedTrades;
+        }
+
+        vector<Trade> getTradesForOrder(uint64_t orderId) const{
+            vector<Trade> result;
+            auto found = tradesbyId.find(orderId);
+            if(found == tradesbyId.end()) return result;
+            for(size_t i : found->second) result.push_back(executedTrades[i]);
+            return result;
         }
 
         bool hasRestingOrder(uint64_t orderId) const{
