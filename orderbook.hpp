@@ -98,6 +98,15 @@ class OrderBook{
             return static_cast<int>(round((price - LOWER_BOUND)/TICK_SIZE));
         }
 
+        // match, then rest any remainder at the back of its level; keeps order.orderId
+        // callers must validate the price first
+        void submitOrder(Order &order){
+            order.timestamp = chrono::steady_clock::now();
+
+            matchOrder(order);
+            if(order.quantity > 0) addOrder(order);
+        }
+
     public:
 
         enum class OrderResult{
@@ -196,10 +205,7 @@ class OrderBook{
             if(index < 0 || index >= NUM_TICKS) return OrderResult::RejectedInvalidPrice;
 
             order.orderId = nextOrderId++;
-            order.timestamp = chrono::steady_clock::now();
-
-            matchOrder(order);
-            if(order.quantity > 0) addOrder(order);
+            submitOrder(order);
 
             return OrderResult::Accepted;
         }
@@ -211,13 +217,19 @@ class OrderBook{
             auto it = found->second;
 
             if(it->price != price || it->quantity < quantity){
+                // check the new price before touching the book so a rejected modify leaves the order resting
+                int index = pricetoIndex(price);
+                if(index < 0 || index >= NUM_TICKS) return OrderResult::RejectedInvalidPrice;
+
                 Order changed = *it;
                 // go through cancelOrder so the bitmap and best index stay in sync
                 cancelOrder(orderId);
 
                 changed.price = price;
                 changed.quantity = quantity;
-                return (placeOrder(changed) == OrderResult::Accepted) ? OrderResult::OrderModified : OrderResult::RejectedInvalidPrice;
+                // same orderId, but re-inserted at the back of the queue
+                submitOrder(changed);
+                return OrderResult::OrderModified;
             }
             else{
                 it->quantity = quantity;

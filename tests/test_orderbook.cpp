@@ -255,6 +255,66 @@ void test_modify_price_moves_order_between_levels() {
     CHECK(book.restingQuantity(newLevelProbe) == 10);
 }
 
+void test_modify_price_keeps_order_id() {
+    OrderBook book("TEST", 100.0);
+    Order o = makeOrder(Side::bid, 95.00, 10);
+    book.placeOrder(o);
+    uint64_t id = o.orderId;
+
+    book.modifyOrder(id, 96.00, 10);
+    CHECK(book.hasRestingOrder(id));
+
+    // the original id must still work for later modifies and cancels
+    book.modifyOrder(id, 96.00, 25);
+    CHECK(book.hasRestingOrder(id));
+    book.cancelOrder(id);
+    CHECK(!book.hasRestingOrder(id));
+    Order probe = makeOrder(Side::bid, 96.00, 0);
+    CHECK(book.restingCount(probe) == 0);
+}
+
+void test_modify_price_goes_to_back_of_queue() {
+    OrderBook book("TEST", 100.0);
+    Order first = makeOrder(Side::bid, 96.00, 10);
+    book.placeOrder(first);
+    Order moved = makeOrder(Side::bid, 95.00, 10);
+    book.placeOrder(moved);
+
+    book.modifyOrder(moved.orderId, 96.00, 10);
+
+    Order ask = makeOrder(Side::ask, 96.00, 10);
+    book.placeOrder(ask);
+    CHECK(book.getTrades().size() == 1);
+    CHECK(book.getTrades().back().buyOrderid == first.orderId);
+    CHECK(book.hasRestingOrder(moved.orderId));
+}
+
+void test_modify_size_increase_goes_to_back_of_queue() {
+    OrderBook book("TEST", 100.0);
+    Order increased = makeOrder(Side::bid, 96.00, 10);
+    book.placeOrder(increased);
+    Order second = makeOrder(Side::bid, 96.00, 10);
+    book.placeOrder(second);
+
+    book.modifyOrder(increased.orderId, 96.00, 15);
+
+    Order ask = makeOrder(Side::ask, 96.00, 10);
+    book.placeOrder(ask);
+    CHECK(book.getTrades().size() == 1);
+    CHECK(book.getTrades().back().buyOrderid == second.orderId);
+    CHECK(book.hasRestingOrder(increased.orderId));
+}
+
+void test_modify_to_invalid_price_leaves_order_resting() {
+    OrderBook book("TEST", 100.0);
+    Order o = makeOrder(Side::bid, 95.00, 10);
+    book.placeOrder(o);
+
+    CHECK(book.modifyOrder(o.orderId, 200.00, 10) == OrderBook::OrderResult::RejectedInvalidPrice);
+    CHECK(book.hasRestingOrder(o.orderId));
+    CHECK(book.restingQuantity(o) == 10);
+}
+
 // Edge case requested: modifying an id the book has never seen.
 void test_modify_unknown_order_id_is_rejected_or_noop() {
     OrderBook book("TEST", 100.0);
@@ -284,6 +344,10 @@ int main() {
         {"aggressive_order_bigger_than_book_rests_remainder", test_aggressive_order_bigger_than_book_rests_remainder},
         {"modify_quantity_only_does_not_duplicate_order", test_modify_quantity_only_does_not_duplicate_order},
         {"modify_price_moves_order_between_levels", test_modify_price_moves_order_between_levels},
+        {"modify_price_keeps_order_id", test_modify_price_keeps_order_id},
+        {"modify_price_goes_to_back_of_queue", test_modify_price_goes_to_back_of_queue},
+        {"modify_size_increase_goes_to_back_of_queue", test_modify_size_increase_goes_to_back_of_queue},
+        {"modify_to_invalid_price_leaves_order_resting", test_modify_to_invalid_price_leaves_order_resting},
         {"modify_unknown_order_id_is_rejected_or_noop", test_modify_unknown_order_id_is_rejected_or_noop},
     };
 
